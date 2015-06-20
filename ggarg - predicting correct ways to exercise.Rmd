@@ -1,0 +1,148 @@
+---
+title: "Practical Machine Learning - Course Project"
+author: "Gaurav Garg (gaurav_garg@yahoo.com)"
+output: html_document
+---
+#Are You Lifing The Barbells Correctly?
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+Read more: http://groupware.les.inf.puc-rio.br/har#sbia_paper_section#ixzz3dSLpXEeC
+
+In this project, we try to reverse engineer a predictive algorithm to classify the activity into 5 categories.
+
+The data for this project came from  http://groupware.les.inf.puc-rio.br/har. 
+
+# Getting Data 
+The RMD file will look for the data files in a sub-folder "data" whereever the RMD file is located. If the .csv files are not present, the code will download them and save them in the ./data folder. If you are running the code from the R console, please set the working directory using setwd() to the directory where the .RMD file is present. 
+```{r setup, cache = FALSE, echo = TRUE, message = FALSE, warning = FALSE, tidy = FALSE, results='hide'}
+library(corrplot);library(caret);library(kernlab);library(rattle); library(rpart);library(randomForest);
+# please set the seed to 98765 for reproduceable results
+set.seed(98765)
+```
+This report uses following R packages. Please install and load them using the install.packages() and library() commands.
+1. library(corrplot);library(caret);library(kernlab);library(rattle); library(rpart);library(randomForest);
+2. Set the seed to 98765 using set.seed() command
+
+```{r downloadData, echo=TRUE, cache=TRUE, results='hide'}
+# In order to ensure reproduceable results, lets download the files from the source
+# If the training file does not exist in the data directory, creae the sub-folder and save the file as 'pml-training.csv'
+if (!file.exists("data/pml-training.csv"))
+        { download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+         destfile = "./data/pml-training.csv", method="curl")
+}
+# If the testing file does not exist in the data directory, creae the sub-folder and save the file as 'pml-testing.csv'
+if (!file.exists("data/pml-testing.csv")) {
+        download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+        destfile = "./data/pml-testing.csv", method="curl")
+}
+
+# Lets read the training data file into the memory. Replace any blanks and #DIV/0! with NA
+pmlTraining <- read.csv("./data/pml-training.csv", header = TRUE, na.strings = c("NA","#DIV/0!",""))
+# Lets read the testing data file into the memory. Replace any blanks and #DIV/0! with NA
+pmlTesting <- read.csv("./data/pml-testing.csv", header = TRUE, na.strings = c("NA","#DIV/0!",""))
+dim(pmlTraining); dim(pmlTesting);
+```
+The training set contains *`r length(pmlTraining$classe)`* observations with *`r length(pmlTraining)`* variables. 
+
+# Data Transformation
+Lets clean up the data before we start any training on the data sets.
+1. Get rid of columns filled with 'NA' 
+2. Remove the id column, user name and timestamps 
+3. If any column does not show significant variance in data, it is not relevant for prediction model. We will use the inbuilt function nearZeroVar() to remove the NZVs. 
+```{r DataTransformation, echo=TRUE, results='hide'}
+# Find any columns in the data frame that has no values at all and make a list
+pmlTraining_filter_col <- pmlTraining[,(colSums(is.na(pmlTraining)) == 0)]
+pmlTesting_filter_col <- pmlTesting[,(colSums(is.na(pmlTesting)) == 0)]
+
+# we dont need the id column, user_name and timestamps for prediction algorithms
+# Lets remove any columns that have near zero variability
+removeCol <- c(removeCol,which(nearZeroVar(pmlTraining_filter_col, saveMetrics=TRUE)$NZV==TRUE))
+
+#subset the training and testing data set to remove all columns in the removeCol list.
+pmlTraining_filter_col <- pmlTraining_filter_col[,!(names(pmlTraining_filter_col) %in% removeCol)]
+pmlTesting_filter_col <- pmlTesting_filter_col[,!(names(pmlTesting_filter_col) %in% removeCol)]
+```
+In the training set, only the variable "new_window" qualifies as the NZV. After getting rid of the columns with NAs and NZVs, our training data set has *`r length(pmlTraining_filter_col$classe)`* observations with *`r length(pmlTraining_filter_col)`* variables. 
+
+I also apply the same data transformation steps to the testing data.
+
+# Partitioning the Data for Training and Cross-Validation
+I create two partitions from the training data set with 60-40 split for training and validation. Testing dataset is set aside for the final testing.
+```{r, echo=TRUE, results='hide'}
+#Partition the Training data with 60% allocated to training and 40% for cross validation
+inTrain = createDataPartition(y = pmlTraining_filter_col$classe, p = 0.6, list = FALSE)
+training <- pmlTraining_filter_col[inTrain,]
+validating <- pmlTraining_filter_col[-inTrain,]
+```
+
+# Model 1 - Training with Decision Tree
+We use the ‘predict’ function to apply the pre-processing of both the training and validation subsets of the original larger ‘training’ dataset.
+```{r training-tree, echo=TRUE, results='hide', cache=TRUE, fig.align='center', fig.width=10, fig.height=10}
+# using the rpart() on the training set to build a prediction model using decision tree
+modFitTree <- rpart(classe ~., data = training, method="class")
+# ploting the decision tree
+fancyRpartPlot(modFitTree)
+```
+
+# Model 1 - Predicting with Decision Tree 
+In order to predict the results, we pass the training data from the validation sub-set to the prediction model. The confusion matrix compares our prediction against the actual classe recorded for the observations.
+```{r predicting-tree, echo=TRUE, cache=TRUE, fig.align='center'}
+# using the model generated by the training data set for predicting on validation data set.
+prediction.tree <- predict(modFitTree, validating, type="class")
+#comparing the results from the prediction model with the actual results stored in the validation data set.
+cm.Tree<-confusionMatrix(prediction.tree,validating$classe)
+cm.Tree
+```
+The confusion matrix shows *`r cm.Tree$overall['Accuracy']`* accuracy and the 95% confidence interval of *`r cm.Tree$overall['AccuracyLower']`* to *`r cm.Tree$overall['AccuracyUpper']`*. 
+
+Lets keep exploring other prediction models. 
+
+# Model 2 - Random Forest Training
+Since we already have the datasets prepped for training and validation, we dont need to do anything else. Lets call the randomForest() with defaults and pass the training set.
+```{r training-randomforest, echo=TRUE, results='hide', cache=TRUE, fig.align='center'}
+#send the training data set to randomForest() with defaults
+modFitRandomForest <- randomForest(classe ~., data = training)
+```
+# Model 2 - Predicting with Random Forest
+In order to predict the results, we pass the training data with the validation sub-set to the prediction model. The confusion matrix compares our prediction against the actual classe recorded for the observations.
+```{r predicting-randomforest, echo=TRUE, cache=TRUE, fig.align='center'}
+# using the model generated by the training data set for predicting on validation data set.
+prediction.forest <- predict(modFitRandomForest,validating,type="class")
+#comparing the results from the prediction model with the actual results stored in the validation data set.
+cm.Forest <- confusionMatrix(prediction.forest,validating$classe)
+cm.Forest
+
+#Out of sample error calculation
+OutOfSampleError <- 1-cm.Forest$overall['Accuracy']
+```
+Let's review the output of the Confusion Matrix to see how well did we do. In the first table, the predictions from the model are represented as rows and the actual values are represented as columns. If we read the first row, we notice that the prediction algorithm classified 2231 records as 'A' (correctly) and two records were classified as 'A' while they were actually 'B'.  Similarly, the prediction algorithm classified 1515 records as (correctly) as 'B' but misclassfied 6 'C' as 'B'. 
+
+#Out of Sample Error
+The confusion matrix shows *`r cm.Forest$overall['Accuracy']`* accuracy and the 95% confidence interval of *`r cm.Forest$overall['AccuracyLower']`* to *`r cm.Forest$overall['AccuracyUpper']`*. This means the out of sample error is *`r OutOfSampleError * 100` %*. 
+
+#Final Output
+This means, we use the Random Forest algorithm on the Testing data set to predict the output. 
+```{r predicting-final, echo=TRUE, cache=FALSE}
+# using the model generated by the training data set for predicting on validation data set.
+prediction.final <- predict(modFitRandomForest,pmlTesting_filter_col,type="class")
+```
+
+The code chunk below takes the output from the prediction model and converts them into seperate files. This should result in 20 files, one file for each prediction in the testing data set.
+```{r submission, echo=TRUE, cache=FALSE}
+#write the output from test data to files for submission
+pml_write_files <- function(x){
+        n = length(x)
+        # write a seperate file for each record in the object
+        # The file will have only the classification predicted by the model as an Alphabet
+        for (i in 1:n){
+                filename = paste0 ("./output/problem_id_",i,".txt")
+                write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+        }
+                
+}
+
+# pass the prediction output to the function and write files.
+pml_write_files(prediction.final)
+```
